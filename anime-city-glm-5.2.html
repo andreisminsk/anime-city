@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>🌸 Anime City 3D 🌸</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #ffd6e8; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  #loading {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, #b3d9ff 0%, #ffd6e8 60%, #ffeacb 100%);
+    font-family: 'Comic Sans MS', 'Marker Felt', system-ui, sans-serif;
+    color: #6a4a6a; font-size: 28px; text-align: center;
+    transition: opacity 0.6s ease;
+  }
+  #loading .inner { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
+  #title-badge {
+    position: fixed; top: 14px; right: 14px; z-index: 50;
+    font-family: 'Comic Sans MS', 'Marker Felt', system-ui, sans-serif;
+    font-size: 20px; font-weight: bold; color: #fff;
+    background: linear-gradient(135deg, #ff9ec4, #b39ddb);
+    padding: 8px 16px; border-radius: 20px;
+    box-shadow: 0 4px 12px rgba(180,120,160,0.4);
+    pointer-events: none; user-select: none;
+  }
+
+  #hud {
+    position: fixed; bottom: 16px; left: 16px; z-index: 50;
+    font-family: 'Comic Sans MS', 'Marker Felt', system-ui, sans-serif;
+    font-size: 14px; color: #6a4a6a; line-height: 1.7;
+    background: rgba(255, 230, 240, 0.92);
+    padding: 12px 16px; border-radius: 16px;
+    box-shadow: 0 6px 18px rgba(180,120,160,0.35);
+    pointer-events: none; user-select: none;
+    max-width: 260px;
+  }
+  #hud b { color: #c2185b; }
+  #hud .key {
+    display: inline-block; min-width: 18px; text-align: center;
+    background: #fff; border: 1px solid #ffb6d5; border-radius: 6px;
+    padding: 1px 5px; font-weight: bold; color: #7b4a6e; margin: 0 2px;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="loading"><div class="inner">🌸 Loading Anime City… 🌸</div></div>
+<div id="title-badge">🌸 ANIME CITY 🌸</div>
+<div id="hud">
+  <b>Controls</b><br>
+  <span class="key">W</span>/<span class="key">S</span> walk forward / back<br>
+  <span class="key">A</span> turn right · <span class="key">D</span> turn left (30°/s)<br>
+  <span class="key">Shift</span> run<br>
+  Drag mouse = rotate camera<br>
+  Scroll = zoom · Touch drag = rotate
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ---------- Renderer ----------
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+app.appendChild(renderer.domElement);
+
+// ---------- Scene & fog ----------
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xffd0e0, 60, 220);
+
+// ---------- Gradient sky background ----------
+function makeSkyTexture() {
+  const c = document.createElement('canvas');
+  c.width = 16; c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0.0, '#7ec8ff');
+  g.addColorStop(0.45, '#ffd6e8');
+  g.addColorStop(0.8, '#ffe9c2');
+  g.addColorStop(1.0, '#fff0d6');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = makeSkyTexture();
+
+// ---------- Environment (IBL) ----------
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// ---------- Lights ----------
+const hemi = new THREE.HemisphereLight(0xffeef5, 0xb6d8ff, 0.9);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xfff2d6, 1.6);
+sun.position.set(40, 70, 30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -90; sun.shadow.camera.right = 90;
+sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 200;
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0xc8e4ff, 0.5);
+fill.position.set(-30, 25, -40);
+scene.add(fill);
+
+// ---------- Toon gradient map ----------
+function makeGradientMap() {
+  const c = document.createElement('canvas');
+  c.width = 4; c.height = 1;
+  const ctx = c.getContext('2d');
+  const cols = ['#808080', '#bbbbbb', '#dddddd', '#ffffff'];
+  for (let i = 0; i < 4; i++) { ctx.fillStyle = cols[i]; ctx.fillRect(i, 0, 1, 1); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  return tex;
+}
+const gradMap = makeGradientMap();
+function toonMat(color, opts = {}) {
+  return new THREE.MeshToonMaterial({ color, gradientMap: gradMap, ...opts });
+}
+
+// ---------- Camera ----------
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 8, -14);
+
+// ---------- City layout ----------
+const CITY = 95;            // bound ±CITY
+const BLOCK = 22;           // block size
+const ROAD = 8;              // road width
+const buildings = [];        // {x,z,w,d} for collision
+
+// Ground / roads
+const groundMat = toonMat(0x9aa6b8);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY*2+40, CITY*2+40), groundMat);
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true;
+scene.add(ground);
+
+// Sidewalks (light pink/cream) under blocks
+const sidewalkMat = toonMat(0xffe4f0);
+const laneMat = toonMat(0xfff5c8);
+
+function makeRoads() {
+  const step = BLOCK + ROAD;
+  for (let x = -CITY; x <= CITY + 0.1; x += step) {
+    // vertical road strip
+    const r = new THREE.Mesh(new THREE.PlaneGeometry(ROAD, CITY*2+40), laneMat);
+    r.rotation.x = -Math.PI/2; r.position.set(x, 0.02, 0); r.receiveShadow = true;
+    scene.add(r);
+  }
+  for (let z = -CITY; z <= CITY + 0.1; z += step) {
+    const r = new THREE.Mesh(new THREE.PlaneGeometry(CITY*2+40, ROAD), laneMat);
+    r.rotation.x = -Math.PI/2; r.position.set(0, 0.02, z); r.receiveShadow = true;
+    scene.add(r);
+  }
+  // lane stripes
+  const stripeMat = toonMat(0xfff0a0);
+  for (let x = -CITY; x <= CITY + 0.1; x += step) {
+    for (let z = -CITY; z <= CITY; z += 6) {
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 3), stripeMat);
+      s.rotation.x = -Math.PI/2; s.position.set(x, 0.03, z); s.receiveShadow = true;
+      scene.add(s);
+    }
+  }
+  for (let z = -CITY; z <= CITY + 0.1; z += step) {
+    for (let x = -CITY; x <= CITY; x += 6) {
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(3, 0.4), stripeMat);
+      s.rotation.x = -Math.PI/2; s.position.set(x, 0.03, z); s.receiveShadow = true;
+      scene.add(s);
+    }
+  }
+}
+makeRoads();
+
+// Sidewalk slabs on each block
+function makeSidewalks() {
+  const step = BLOCK + ROAD;
+  for (let x = -CITY + step/2; x < CITY; x += step) {
+    for (let z = -CITY + step/2; z < CITY; z += step) {
+      const s = new THREE.Mesh(new THREE.BoxGeometry(BLOCK, 0.15, BLOCK), sidewalkMat);
+      s.position.set(x, 0.07, z); s.receiveShadow = true;
+      scene.add(s);
+    }
+  }
+}
+makeSidewalks();
+
+// ---------- Kanji/katakana signs ----------
+const signWords = ['カフェ','寿司','ラーメン','マンガ','アニメ','ゲーム','神社','学校','花屋','魔法'];
+function makeSignTexture(word) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const ctx = c.getContext('2d');
+  const bg = ['#ff9ec4','#9ec8ff','#b39ddb','#a8e6cf','#ffd6a8'][Math.floor(Math.random()*5)];
+  ctx.fillStyle = bg; ctx.fillRect(0,0,256,128);
+  ctx.fillStyle = '#fff'; ctx.fillRect(8,8,240,112);
+  ctx.strokeStyle = bg; ctx.lineWidth = 6; ctx.strokeRect(8,8,240,112);
+  ctx.fillStyle = '#5a3a4a';
+  ctx.font = 'bold 64px "Yu Mincho","MS Mincho",serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(word, 128, 66);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// ---------- Buildings ----------
+const buildingColors = [0xffd1e8, 0xcfe8ff, 0xd9c7f5, 0xc7f5e2, 0xfff0c2, 0xffe0c2, 0xe6c7f5, 0xc7e8ff];
+const windowColors = [0xfff4a0, 0xa0d8ff, 0xffb0d0, 0xa0ffb0, 0xffd0a0, 0xc0a0ff];
+
+function makeBuilding(x, z, w, d, h) {
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+
+  const bodyMat = toonMat(buildingColors[Math.floor(Math.random()*buildingColors.length)]);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+  body.position.y = h/2; body.castShadow = true; body.receiveShadow = true;
+  group.add(body);
+
+  // pitched roof
+  const roofMat = toonMat(0x8a5a7a);
+  const roofH = Math.min(w, d) * 0.4;
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w,d)*0.72, roofH, 4), roofMat);
+  roof.rotation.y = Math.PI/4;
+  roof.position.y = h + roofH/2;
+  roof.castShadow = true;
+  group.add(roof);
+
+  // windows
+  const rows = Math.max(1, Math.floor(h/3));
+  const cols = Math.max(2, Math.floor(Math.min(w,d)/2.2));
+  for (let r = 0; r < rows; r++) {
+    for (let cc = 0; cc < cols; cc++) {
+      if (Math.random() < 0.25) continue;
+      const wc = windowColors[Math.floor(Math.random()*windowColors.length)];
+      const wm = new THREE.MeshToonMaterial({ color: wc, gradientMap: gradMap, emissive: wc, emissiveIntensity: 0.5 });
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.0, 0.1), wm);
+      const yy = 1.5 + r*3;
+      const xx = -w/2 + 1.4 + cc*((w-2.8)/Math.max(1,cols-1));
+      win.position.set(xx, yy, d/2 + 0.05);
+      group.add(win);
+      // back side
+      const win2 = win.clone(); win2.position.z = -d/2 - 0.05; group.add(win2);
+    }
+  }
+
+  // sign on some buildings
+  if (Math.random() < 0.5) {
+    const word = signWords[Math.floor(Math.random()*signWords.length)];
+    const tex = makeSignTexture(word);
+    const signMat = new THREE.MeshToonMaterial({ map: tex, gradientMap: gradMap });
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.6), signMat);
+    sign.position.set(0, h + roofH + 1.0, 0);
+    sign.castShadow = true;
+    group.add(sign);
+    // small post
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,1.0), toonMat(0x6a4a3a));
+    post.position.set(0, h + roofH + 0.5, 0); group.add(post);
+  }
+
+  scene.add(group);
+  buildings.push({ x, z, w: w/2 + 0.4, d: d/2 + 0.4 });
+}
+
+function makeCity() {
+  const step = BLOCK + ROAD;
+  for (let x = -CITY + step/2; x < CITY; x += step) {
+    for (let z = -CITY + step/2; z < CITY; z += step) {
+      // a few buildings per block
+      const n = 1 + Math.floor(Math.random()*2);
+      for (let i = 0; i < n; i++) {
+        const w = 4 + Math.random()*5;
+        const d = 4 + Math.random()*5;
+        const h = 5 + Math.random()*14;
+        const ox = (Math.random()-0.5) * (BLOCK - w - 2);
+        const oz = (Math.random()-0.5) * (BLOCK - d - 2);
+        makeBuilding(x + ox, z + oz, w, d, h);
+      }
+    }
+  }
+}
+makeCity();
+
+// ---------- Sakura trees ----------
+function makeSakura(x, z) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const trunkMat = toonMat(0x8a5a3a);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 2.2, 8), trunkMat);
+  trunk.position.y = 1.1; trunk.castShadow = true; g.add(trunk);
+  const leafMat = toonMat(0xffc2dc);
+  for (let i = 0; i < 6; i++) {
+    const r = 0.8 + Math.random()*0.6;
+    const s = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), leafMat);
+    s.position.set((Math.random()-0.5)*1.6, 2.2 + Math.random()*1.2, (Math.random()-0.5)*1.6);
+    s.castShadow = true; g.add(s);
+  }
+  scene.add(g);
+}
+function plantSakura() {
+  const step = BLOCK + ROAD;
+  for (let x = -CITY + step/2; x < CITY; x += step) {
+    for (let z = -CITY + step/2; z < CITY; z += step) {
+      // along block edges
+      for (let e = -1; e <= 1; e += 2) {
+        if (Math.random() < 0.7) makeSakura(x + e*(BLOCK/2 - 0.8), z - BLOCK/2 + 0.8);
+        if (Math.random() < 0.7) makeSakura(x - BLOCK/2 + 0.8, z + e*(BLOCK/2 - 0.8));
+      }
+    }
+  }
+}
+plantSakura();
+
+// ---------- Torii gate ----------
+function makeTorii(x, z) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const red = toonMat(0xe53935);
+  const black = toonMat(0x3a2a2a);
+  const colH = 7, colR = 0.4;
+  for (let s = -1; s <= 1; s += 2) {
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(colR, colR*1.2, colH, 12), red);
+    col.position.set(s*3, colH/2, 0); col.castShadow = true; g.add(col);
+  }
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(8, 0.7, 0.7), red);
+  beam.position.y = colH - 0.4; beam.castShadow = true; g.add(beam);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(9, 0.9, 1.0), black);
+  top.position.y = colH + 0.5; top.castShadow = true; g.add(top);
+  // small crosspiece
+  const cp = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.4, 0.5), red);
+  cp.position.y = colH - 1.2; g.add(cp);
+  scene.add(g);
+}
+makeTorii(0, 0);
+
+// ---------- Clouds ----------
+const clouds = [];
+function makeCloud(x, y, z) {
+  const g = new THREE.Group();
+  const m = toonMat(0xffffff, { transparent: true, opacity: 0.9 });
+  for (let i = 0; i < 5; i++) {
+    const r = 2 + Math.random()*2.5;
+    const s = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), m);
+    s.position.set((Math.random()-0.5)*6, (Math.random()-0.5)*2, (Math.random()-0.5)*6);
+    g.add(s);
+  }
+  g.position.set(x, y, z);
+  scene.add(g);
+  clouds.push(g);
+}
+for (let i = 0; i < 14; i++) {
+  makeCloud((Math.random()-0.5)*180, 30 + Math.random()*15, (Math.random()-0.5)*180);
+}
+
+// ---------- Falling petals ----------
+const petalGeo = new THREE.PlaneGeometry(0.3, 0.3);
+const petalMat = new THREE.MeshBasicMaterial({ color: 0xffc0d8, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+const petals = [];
+for (let i = 0; i < 220; i++) {
+  const p = new THREE.Mesh(petalGeo, petalMat);
+  p.position.set((Math.random()-0.5)*200, Math.random()*40, (Math.random()-0.5)*200);
+  p.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+  p.userData = { vy: -0.5 - Math.random()*0.8, rx: (Math.random()-0.5)*1.5, ry: (Math.random()-0.5)*1.5, sway: Math.random()*Math.PI*2 };
+  scene.add(p);
+  petals.push(p);
+}
+
+// ---------- Character (anime boy) ----------
+const boy = new THREE.Group();
+scene.add(boy);
+
+const skinMat = toonMat(0xffe1c4);
+const hairMat = toonMat(0x4a3a8a);      // indigo
+const hairHiMat = toonMat(0x7a5ac0);   // violet highlight
+const blazerMat = toonMat(0x2a3a6a);   // navy
+const whiteMat = toonMat(0xffffff);
+const tieMat = toonMat(0xd32f2f);      // red
+const pantsMat = toonMat(0x2a2a3a);
+const shoeMat = toonMat(0x1a1a2a);
+const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const irisMat = new THREE.MeshBasicMaterial({ color: 0x5a7ad0 });
+const pupilMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+const hiMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const blushMat = toonMat(0xff9ec0);
+const mouthMat = toonMat(0xc46a6a);
+
+// Torso (blazer)
+const torso = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.4, 0.7), blazerMat);
+torso.position.y = 2.0; torso.castShadow = true; boy.add(torso);
+
+// V-collar (white)
+const collar = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 0.72), whiteMat);
+collar.position.y = 2.6; boy.add(collar);
+const collarV = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.74), blazerMat);
+collarV.position.set(0, 2.55, 0.05); boy.add(collarV);
+
+// Tie
+const tieKnot = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.1), tieMat);
+tieKnot.position.set(0, 2.45, 0.38); boy.add(tieKnot);
+const tieBody = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.7, 0.06), tieMat);
+tieBody.position.set(0, 2.05, 0.38); boy.add(tieBody);
+
+// Head group (big)
+const head = new THREE.Group();
+head.position.y = 3.5; boy.add(head);
+const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.95, 24, 20), skinMat);
+headMesh.scale.set(1.05, 1.1, 1.0); headMesh.castShadow = true; head.add(headMesh);
+
+// Hair base (spiky) group
+const hair = new THREE.Group();
+head.add(hair);
+const hairBack = new THREE.Mesh(new THREE.SphereGeometry(1.0, 20, 16), hairMat);
+hairBack.scale.set(1.08, 0.9, 1.08); hairBack.position.y = 0.12; hairBack.castShadow = true; hair.add(hairBack);
+
+// Spiky bangs (front) - group for physics sway
+const bangs = new THREE.Group();
+hair.add(bangs);
+for (let i = 0; i < 7; i++) {
+  const a = (i - 3) * 0.32;
+  const spike = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.6, 6), hairMat);
+  spike.position.set(Math.sin(a)*0.85, 0.55 + Math.random()*0.2, 0.78 + Math.cos(a)*0.1);
+  spike.rotation.x = -0.5 + Math.random()*0.3;
+  spike.rotation.z = -a*0.6;
+  spike.castShadow = true; bangs.add(spike);
+  // highlight variant on some
+  if (i % 2 === 0) {
+    const hi = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 6), hairHiMat);
+    hi.position.copy(spike.position); hi.position.y += 0.12;
+    hi.rotation.copy(spike.rotation); bangs.add(hi);
+  }
+}
+// top spikes
+for (let i = 0; i < 5; i++) {
+  const a = (i - 2) * 0.4;
+  const spike = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.7, 6), hairMat);
+  spike.position.set(Math.sin(a)*0.7, 0.95, Math.cos(a)*0.3);
+  spike.rotation.x = -0.9; spike.rotation.z = -a*0.5;
+  spike.castShadow = true; hair.add(spike);
+}
+// Ahoge (antenna)
+const ahoge = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.7, 6), hairHiMat);
+ahoge.position.set(0.1, 1.35, 0.1); ahoge.rotation.z = -0.3; hair.add(ahoge);
+
+// Eyes (forward, +Z)
+function makeEye(side) {
+  const g = new THREE.Group();
+  g.position.set(side*0.34, 0.05, 0.82);
+  const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), eyeWhiteMat);
+  sclera.scale.set(1, 1.1, 0.5); g.add(sclera);
+  const iris = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), irisMat);
+  iris.scale.set(1, 1, 0.4); iris.position.z = 0.08; g.add(iris);
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 10), pupilMat);
+  pupil.scale.set(1, 1, 0.4); pupil.position.z = 0.13; g.add(pupil);
+  // highlights
+  const hi1 = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), hiMat);
+  hi1.position.set(0.05, 0.06, 0.16); g.add(hi1);
+  const hi2 = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 8), hiMat);
+  hi2.position.set(-0.05, -0.06, 0.16); g.add(hi2);
+  return g;
+}
+head.add(makeEye(-1));
+head.add(makeEye(1));
+
+// Eyebrows
+for (let s = -1; s <= 1; s += 2) {
+  const brow = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.08), hairMat);
+  brow.position.set(s*0.34, 0.34, 0.86); brow.rotation.z = s*0.15;
+  head.add(brow);
+}
+// Mouth
+const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.06, 0.06), mouthMat);
+mouth.position.set(0, -0.35, 0.86); head.add(mouth);
+// Blush
+for (let s = -1; s <= 1; s += 2) {
+  const blush = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), blushMat);
+  blush.scale.set(1, 0.6, 0.3); blush.position.set(s*0.5, -0.15, 0.85); head.add(blush);
+}
+
+// Arms
+function makeArm(side) {
+  const g = new THREE.Group();
+  g.position.set(side*0.75, 2.55, 0);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.7, 0.28), blazerMat);
+  upper.position.y = -0.35; upper.castShadow = true; g.add(upper);
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.65, 0.24), skinMat);
+  lower.position.y = -1.0; lower.castShadow = true; g.add(lower);
+  return g;
+}
+const armL = makeArm(-1); boy.add(armL);
+const armR = makeArm(1); boy.add(armR);
+
+// Legs
+function makeLeg(side) {
+  const g = new THREE.Group();
+  g.position.set(side*0.28, 1.3, 0);
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.3, 0.3), pantsMat);
+  leg.position.y = -0.65; leg.castShadow = true; g.add(leg);
+  const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.5), shoeMat);
+  shoe.position.set(0, -1.4, 0.08); shoe.castShadow = true; g.add(shoe);
+  return g;
+}
+const legL = makeLeg(-1); boy.add(legL);
+const legR = makeLeg(1); boy.add(legR);
+
+// ---------- Input ----------
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Camera orbit state
+let camYaw = Math.PI;       // behind character initially
+let camPitch = 0.35;
+let camDist = 14;
+const camTarget = new THREE.Vector3();
+const camCurrent = new THREE.Vector3();
+
+// Mouse / touch drag
+let dragging = false, lastX = 0, lastY = 0;
+renderer.domElement.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', () => { dragging = false; });
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  camYaw -= dx * 0.005;
+  // INVERTED vertical: drag up (dy<0) => pitch down (decrease)
+  camPitch -= -dy * 0.005;
+  camPitch = THREE.MathUtils.clamp(camPitch, -0.3, 1.0);
+});
+
+renderer.domElement.addEventListener('wheel', e => {
+  e.preventDefault();
+  camDist = THREE.MathUtils.clamp(camDist + e.deltaY * 0.02, 4, 30);
+}, { passive: false });
+
+// Touch
+let touchDrag = false, tLastX = 0, tLastY = 0;
+renderer.domElement.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) { touchDrag = true; tLastX = e.touches[0].clientX; tLastY = e.touches[0].clientY; }
+}, { passive: true });
+renderer.domElement.addEventListener('touchmove', e => {
+  if (!touchDrag || e.touches.length !== 1) return;
+  const dx = e.touches[0].clientX - tLastX, dy = e.touches[0].clientY - tLastY;
+  tLastX = e.touches[0].clientX; tLastY = e.touches[0].clientY;
+  camYaw -= dx * 0.005;
+  camPitch -= -dy * 0.005;   // inverted
+  camPitch = THREE.MathUtils.clamp(camPitch, -0.3, 1.0);
+}, { passive: true });
+renderer.domElement.addEventListener('touchend', () => { touchDrag = false; });
+
+// ---------- Character state ----------
+let yaw = 0;          // character facing (radians)
+let walkPhase = 0;
+let bob = 0;
+const moveSpeed = 7;
+const runSpeed = 13;
+const turnRate = THREE.MathUtils.degToRad(30); // per second
+
+// ---------- Animation loop ----------
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  // --- Turning (continuous while held) ---
+  if (keys['KeyA']) yaw += turnRate * dt;       // A = turn right
+  if (keys['KeyD']) yaw -= turnRate * dt;       // D = turn left
+
+  // --- Movement along facing direction ---
+  const running = keys['ShiftLeft'] || keys['ShiftRight'];
+  const speed = running ? runSpeed : moveSpeed;
+  let moving = 0;
+  const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)); // forward along facing
+  if (keys['KeyW']) moving = 1;
+  if (keys['KeyS']) moving = -1;
+
+  if (moving !== 0) {
+    const move = fwd.clone().multiplyScalar(moving * speed * dt);
+    const nx = boy.position.x + move.x;
+    const nz = boy.position.z + move.z;
+    // collision
+    let blocked = false;
+    for (const b of buildings) {
+      if (Math.abs(nx - b.x) < b.w + 0.5 && Math.abs(nz - b.z) < b.d + 0.5) { blocked = true; break; }
+    }
+    if (!blocked) {
+      boy.position.x = THREE.MathUtils.clamp(nx, -CITY, CITY);
+      boy.position.z = THREE.MathUtils.clamp(nz, -CITY, CITY);
+    }
+  }
+
+  // Character rotation to face yaw
+  const targetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
+  boy.quaternion.slerp(targetQuat, 0.25);
+
+  // --- Walk cycle ---
+  const moveAmt = Math.abs(moving);
+  if (moveAmt > 0) {
+    walkPhase += dt * (running ? 14 : 9);
+  } else {
+    walkPhase = 0;
+  }
+  const swing = Math.sin(walkPhase) * (moveAmt > 0 ? 1 : 0) * 0.6;
+  const swing2 = Math.sin(walkPhase + Math.PI) * (moveAmt > 0 ? 1 : 0) * 0.6;
+
+  // arms
+  armL.rotation.x = swing;
+  armR.rotation.x = swing2;
+  // legs
+  legL.rotation.x = swing2;
+  legR.rotation.x = swing;
+  // torso bob
+  const targetBob = moveAmt > 0 ? Math.abs(Math.sin(walkPhase)) * 0.12 : 0;
+  bob += (targetBob - bob) * Math.min(1, dt * 10);
+  boy.position.y = bob;
+
+  // idle decay
+  if (moveAmt === 0) {
+    armL.rotation.x *= 0.85; armR.rotation.x *= 0.85;
+    legL.rotation.x *= 0.85; legR.rotation.x *= 0.85;
+  }
+
+  // Hair sway
+  bangs.rotation.x = Math.sin(t * 2.0) * 0.06;
+  bangs.rotation.z = Math.sin(t * 1.7) * 0.04;
+  ahoge.rotation.z = -0.3 + Math.sin(t * 3.0) * 0.15;
+
+  // --- Camera (decoupled from character facing) ---
+  camTarget.lerp(boy.position, Math.min(1, dt * 6));
+  const cx = camTarget.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist;
+  const cy = camTarget.y + Math.sin(camPitch) * camDist + 2.0;
+  const cz = camTarget.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist;
+  camCurrent.lerp(new THREE.Vector3(cx, cy, cz), Math.min(1, dt * 6));
+  camera.position.copy(camCurrent);
+  camera.lookAt(camTarget.x, camTarget.y + 2.0, camTarget.z);
+
+  // --- Clouds drift ---
+  for (const cl of clouds) {
+    cl.position.x += dt * 0.6;
+    if (cl.position.x > 110) cl.position.x = -110;
+  }
+
+  // --- Petals fall ---
+  for (const p of petals) {
+    p.position.y += p.userData.vy * dt;
+    p.rotation.x += p.userData.rx * dt;
+    p.rotation.y += p.userData.ry * dt;
+    p.position.x += Math.sin(t + p.userData.sway) * dt * 0.3;
+    if (p.position.y < 0.2) {
+      p.position.y = 40;
+      p.position.x = (Math.random()-0.5)*200;
+      p.position.z = (Math.random()-0.5)*200;
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// Hide loading and start
+document.getElementById('loading').style.opacity = '0';
+setTimeout(() => { document.getElementById('loading').style.display = 'none'; }, 600);
+animate();
+
+// ---------- Resize ----------
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

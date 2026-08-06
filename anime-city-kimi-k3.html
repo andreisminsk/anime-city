@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>🌸 Anime City 🌸</title>
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; height:100%;
+    font-family:'Comic Sans MS','Marker Felt',system-ui,sans-serif; }
+  canvas { display:block; touch-action:none; }
+  #loading {
+    position:fixed; inset:0; background:linear-gradient(180deg,#ffd6e8,#fff3c9);
+    display:flex; align-items:center; justify-content:center; z-index:50;
+    color:#d16a7e; font-size:32px; font-weight:bold; letter-spacing:2px;
+  }
+  #title {
+    position:fixed; top:14px; right:16px; z-index:10; pointer-events:none;
+    background:rgba(255,214,232,.92); color:#c2447a; font-weight:bold;
+    font-size:20px; padding:10px 18px; border-radius:20px;
+    box-shadow:0 4px 14px rgba(210,90,140,.35); border:2px solid #fff;
+  }
+  #hud {
+    position:fixed; left:16px; bottom:16px; z-index:10; pointer-events:none;
+    background:rgba(255,214,232,.92); color:#8a3a5e; border:2px solid #fff;
+    border-radius:16px; padding:12px 16px; font-size:14px; line-height:1.55;
+    box-shadow:0 6px 18px rgba(210,90,140,.35);
+  }
+  #hud b { color:#c2447a; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="loading">🌸 Loading Anime City… 🌸</div>
+<div id="title">🌸 ANIME CITY 🌸</div>
+<div id="hud">
+  <b>🎮 Controls</b><br>
+  <b>W / S</b> — Walk forward / back<br>
+  <b>A / D</b> — Turn right / left (30°/s)<br>
+  <b>Shift</b> — Run<br>
+  <b>Mouse drag</b> — Camera &nbsp; <b>Scroll</b> — Zoom
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ---------- renderer / scene ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xffd6e8, 55, 170);
+
+// gradient sky (blue -> pink -> warm horizon)
+{
+  const c = document.createElement('canvas'); c.width = 16; c.height = 512;
+  const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0,0,0,512);
+  gr.addColorStop(0.0, '#7ec8ff');
+  gr.addColorStop(0.55,'#ffc2e0');
+  gr.addColorStop(1.0, '#ffe9c9');
+  g.fillStyle = gr; g.fillRect(0,0,16,512);
+  const sky = new THREE.CanvasTexture(c);
+  sky.colorSpace = THREE.SRGBColorSpace;
+  scene.background = sky;
+}
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 400);
+
+/* ---------- toon shading ---------- */
+const gradArr = new Uint8Array([90, 150, 210, 255]);
+const gradientMap = new THREE.DataTexture(gradArr, 4, 1, THREE.RedFormat);
+gradientMap.minFilter = THREE.NearestFilter;
+gradientMap.magFilter = THREE.NearestFilter;
+gradientMap.needsUpdate = true;
+const toon = (color, opts={}) => new THREE.MeshToonMaterial({ color, gradientMap, ...opts });
+
+/* ---------- lights ---------- */
+scene.add(new THREE.HemisphereLight(0xffffff, 0xffc0d9, 0.75));
+const sun = new THREE.DirectionalLight(0xfff2d9, 1.25);
+sun.position.set(50, 70, 30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -80; sun.shadow.camera.right = 80;
+sun.shadow.camera.top = 80;   sun.shadow.camera.bottom = -80;
+sun.shadow.camera.far = 220;
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xbfe3ff, 0.4);
+fill.position.set(-30, 25, -40);
+scene.add(fill);
+
+/* ---------- ground / roads / sidewalks ---------- */
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(160,160), toon(0xbfe8c9));
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const roadMat = toon(0xa0a8bc);
+const stripeMat = toon(0xfff6fa);
+const ROADS = [-36,-12,12,36];
+for (const r of ROADS) {
+  for (const horiz of [false, true]) {
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(8, 140), roadMat);
+    road.rotation.x = -Math.PI/2;
+    if (horiz) road.rotation.z = Math.PI/2;
+    road.position.set(horiz?0:r, 0.02, horiz?r:0);
+    road.receiveShadow = true;
+    scene.add(road);
+    for (let i=-64; i<=64; i+=6) {           // dashed lane stripes
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 2.4), stripeMat);
+      s.rotation.x = -Math.PI/2;
+      s.position.set(horiz?i:r, 0.035, horiz?r:i);
+      if (horiz) s.rotation.z = Math.PI/2;
+      scene.add(s);
+    }
+  }
+}
+
+/* ---------- kanji signs ---------- */
+const SIGN_WORDS = ['カフェ','寿司','ラーメン','マンガ','アニメ','ゲーム','神社','学校','花屋','魔法'];
+function signTexture(word, bg, fg) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = bg; g.fillRect(0,0,256,128);
+  g.strokeStyle = fg; g.lineWidth = 10; g.strokeRect(8,8,240,112);
+  g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold 62px "Hiragino Sans","Yu Gothic","Meiryo",sans-serif';
+  g.fillText(word, 128, 70);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/* ---------- city ---------- */
+const buildings = [];   // {x,z,hw,hd} for AABB collision
+const PASTEL = ['#ffd6e8','#cfe8ff','#d9f7e3','#e6dcff','#fff3c9','#ffe4c9'];
+const ROOFC  = ['#ff9fb0','#8fb8e8','#8fd9b6','#b39fe8','#f0c987','#ff8a9e'];
+const WINC   = [0xffe98a, 0x9fd8ff, 0xffb3d9, 0xb8ffc9].map(c =>
+  new THREE.MeshToonMaterial({ color:c, emissive:c, emissiveIntensity:0.65, gradientMap }));
+const sidewalkMat = toon(0xffe9f2);
+const rnd = (a,b) => a + Math.random()*(b-a);
+const pick = arr => arr[Math.floor(Math.random()*arr.length)];
+
+function addWindows(bx, by, bz, w, h, d) {
+  const cols = Math.min(4, Math.floor(w/1.8));
+  const rows = Math.min(6, Math.floor(h/2.4));
+  for (let f=0; f<rows; f++) for (let c=0; c<cols; c++) {
+    if (Math.random() < 0.25) continue;
+    const wx = bx - w/2 + (c+0.5)*(w/cols);
+    const wy = by + 1.6 + f*(h-2.2)/Math.max(1,rows-1);
+    for (const side of [1,-1]) {
+      const win = new THREE.Mesh(new THREE.PlaneGeometry(0.55,0.65), pick(WINC));
+      win.position.set(wx, wy, bz + side*(d/2+0.02));
+      if (side<0) win.rotation.y = Math.PI;
+      scene.add(win);
+    }
+  }
+}
+
+function makeBuilding(x, z) {
+  const w = rnd(8,12), d = rnd(8,12), h = rnd(8,20);
+  const col = pick(PASTEL);
+  const b = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), toon(col));
+  b.position.set(x, h/2+0.24, z);
+  b.castShadow = b.receiveShadow = true;
+  scene.add(b);
+  const r = Math.sqrt(w*w+d*d)/2 * 0.92;
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(r, rnd(2.5,4), 4), toon(pick(ROOFC)));
+  roof.rotation.y = Math.PI/4;
+  roof.position.set(x, h+0.24 + roof.geometry.parameters.height/2, z);
+  roof.castShadow = true;
+  scene.add(roof);
+  addWindows(x, 0.24, z, w, h, d);
+  if (Math.random() < 0.55) {   // roof-mounted kanji sign
+    const word = pick(SIGN_WORDS);
+    const tex = signTexture(word, pick(PASTEL), '#4a2a4e');
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.6,1.3),
+      new THREE.MeshToonMaterial({ map:tex, gradientMap }));
+    sign.position.set(x, h+1.1, z + d/2*0.55 + 0.4);
+    scene.add(sign);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(2.7,1.4,0.12), toon(0x8a5a7e));
+    back.position.set(x, h+1.1, z + d/2*0.55 + 0.32);
+    back.castShadow = true;
+    scene.add(back);
+  }
+  buildings.push({ x, z, hw:w/2, hd:d/2 });
+}
+
+function makeTree(x, z) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.2,1.3,7), toon(0xa9746e));
+  trunk.position.y = 0.65; trunk.castShadow = true;
+  g.add(trunk);
+  const pinks = [0xffc7dd, 0xffb3d1, 0xffd6e8];
+  for (let i=0;i<4;i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(rnd(0.5,0.8),10,8), toon(pick(pinks)));
+    s.position.set(rnd(-0.5,0.5), rnd(1.4,2.1), rnd(-0.5,0.5));
+    s.castShadow = true;
+    g.add(s);
+  }
+  g.position.set(x,0,z);
+  scene.add(g);
+}
+
+function makeTorii(x, z) {
+  const red = toon(0xe0455a);
+  const g = new THREE.Group();
+  for (const s of [-1,1]) {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.22,3.6,10), red);
+    p.position.set(s*1.7, 1.8, 0); p.castShadow = true;
+    g.add(p);
+  }
+  const top = new THREE.Mesh(new THREE.BoxGeometry(4.8,0.32,0.4), red);
+  top.position.y = 3.7; top.castShadow = true; g.add(top);
+  const top2 = new THREE.Mesh(new THREE.BoxGeometry(5.2,0.22,0.5), toon(0x3a3a5e));
+  top2.position.y = 3.95; g.add(top2);
+  const mid = new THREE.Mesh(new THREE.BoxGeometry(3.9,0.24,0.3), red);
+  mid.position.y = 2.9; g.add(mid);
+  g.position.set(x,0,z);
+  scene.add(g);
+}
+
+// blocks: 5x5 grid, center block = shrine plaza
+for (let bx=-2; bx<=2; bx++) for (let bz=-2; bz<=2; bz++) {
+  const x = bx*24, z = bz*24;
+  const walk = new THREE.Mesh(new THREE.BoxGeometry(18,0.24,18), sidewalkMat);
+  walk.position.set(x, 0.12, z);
+  walk.receiveShadow = true;
+  scene.add(walk);
+  if (bx===0 && bz===0) {
+    makeTorii(x, z+5);
+    const sh = new THREE.Mesh(new THREE.BoxGeometry(6,4,5), toon(0xfff3c9));
+    sh.position.set(x, 2.24, z-4); sh.castShadow = sh.receiveShadow = true;
+    scene.add(sh);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(4.9, 2.6, 4), toon(0xe0455a));
+    roof.rotation.y = Math.PI/4; roof.position.set(x, 5.5, z-4); roof.castShadow = true;
+    scene.add(roof);
+    const tex = signTexture('神社', '#fff3c9', '#c2447a');
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.2,1.1),
+      new THREE.MeshToonMaterial({ map:tex, gradientMap }));
+    sign.position.set(x, 3.2, z-1.45);
+    scene.add(sign);
+    buildings.push({ x, z:z-4, hw:3, hd:2.5 });
+    makeTree(x-6, z+2); makeTree(x+6, z+2);
+  } else {
+    makeBuilding(x + rnd(-1.5,1.5), z + rnd(-1.5,1.5));
+  }
+}
+// sakura trees at intersections
+for (const ix of ROADS) for (const iz of ROADS) {
+  makeTree(ix+5.6, iz+5.6);
+  makeTree(ix-5.6, iz-5.6);
+}
+
+/* ---------- clouds ---------- */
+const clouds = [];
+for (let i=0;i<7;i++) {
+  const g = new THREE.Group();
+  const n = 4 + Math.floor(Math.random()*3);
+  for (let j=0;j<n;j++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(rnd(1.4,2.8),10,8), toon(0xffffff));
+    s.position.set(rnd(-3,3), rnd(-0.6,0.6), rnd(-1.5,1.5));
+    g.add(s);
+  }
+  g.position.set(rnd(-70,70), rnd(24,36), rnd(-70,70));
+  g.userData.speed = rnd(0.5,1.3);
+  scene.add(g); clouds.push(g);
+}
+
+/* ---------- falling petals ---------- */
+const petals = [];
+const petalGeo = new THREE.PlaneGeometry(0.14,0.14);
+const petalMats = [toon(0xffb3d1,{side:THREE.DoubleSide}), toon(0xffc7dd,{side:THREE.DoubleSide})];
+for (let i=0;i<130;i++) {
+  const p = new THREE.Mesh(petalGeo, pick(petalMats));
+  p.position.set(rnd(-65,65), rnd(0,30), rnd(-65,65));
+  p.userData = { v:rnd(1,2.6), ph:rnd(0,6.28), rx:rnd(1,4), rz:rnd(1,4) };
+  scene.add(p); petals.push(p);
+}
+
+/* ---------- anime boy character ---------- */
+const SKIN = 0xffe1c4, HAIR = 0x5656a8, HAIR_HI = 0x8a6fd6;
+const boy = new THREE.Group();
+const body = new THREE.Group();          // bobbing group (torso/head/arms)
+boy.add(body);
+
+// legs (pivot at hip y=0.78)
+function makeLeg(side) {
+  const g = new THREE.Group();
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.72,0.26), toon(0x2f3550));
+  leg.position.y = -0.38; leg.castShadow = true; g.add(leg);
+  const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.24,0.14,0.38), toon(0x4a3a3a));
+  shoe.position.set(0,-0.75,0.05); shoe.castShadow = true; g.add(shoe);
+  g.position.set(side*0.16, 0.78, 0);
+  boy.add(g);
+  return g;
+}
+const legL = makeLeg(-1), legR = makeLeg(1);
+
+// torso: navy blazer, white shirt, V collar, red tie
+const torso = new THREE.Mesh(new THREE.BoxGeometry(0.72,0.78,0.42), toon(0x3a4a7a));
+torso.position.y = 1.16; torso.castShadow = true; body.add(torso);
+const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.26,0.5,0.03), toon(0xffffff));
+shirt.position.set(0,1.2,0.215); body.add(shirt);
+for (const s of [-1,1]) {
+  const col = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.22,0.03), toon(0xffffff));
+  col.position.set(s*0.13, 1.44, 0.21); col.rotation.z = -s*0.5; body.add(col);
+}
+const tie = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.34,0.04), toon(0xe0455a));
+tie.position.set(0,1.12,0.235); body.add(tie);
+const knot = new THREE.Mesh(new THREE.BoxGeometry(0.15,0.12,0.06), toon(0xe0455a));
+knot.position.set(0,1.36,0.24); body.add(knot);
+
+// arms (pivot at shoulder)
+function makeArm(side) {
+  const g = new THREE.Group();
+  const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.18,0.6,0.2), toon(0x3a4a7a));
+  sleeve.position.y = -0.28; sleeve.castShadow = true; g.add(sleeve);
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.09,8,8), toon(SKIN));
+  hand.position.y = -0.62; hand.castShadow = true; g.add(hand);
+  g.position.set(side*0.45, 1.44, 0);
+  g.rotation.z = side * -0.08;
+  body.add(g);
+  return g;
+}
+const armL = makeArm(-1), armR = makeArm(1);
+
+// head
+const head = new THREE.Group();
+head.position.y = 1.86;
+body.add(head);
+const face = new THREE.Mesh(new THREE.SphereGeometry(0.5,24,18), toon(SKIN));
+face.castShadow = true; head.add(face);
+
+// big anime eyes (sclera + iris + pupil + 2 highlights), facing +Z
+function makeEye(side) {
+  const g = new THREE.Group();
+  const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.15,14,12), toon(0xffffff));
+  sclera.scale.set(1,1.3,0.45); g.add(sclera);
+  const iris = new THREE.Mesh(new THREE.CircleGeometry(0.105,20), toon(0x5a7ae0));
+  iris.position.z = 0.075; g.add(iris);
+  const pupil = new THREE.Mesh(new THREE.CircleGeometry(0.05,14),
+    new THREE.MeshBasicMaterial({ color:0x1a1a2e }));
+  pupil.position.z = 0.082; g.add(pupil);
+  const hi1 = new THREE.Mesh(new THREE.CircleGeometry(0.038,10),
+    new THREE.MeshBasicMaterial({ color:0xffffff }));
+  hi1.position.set(0.045,0.05,0.088); g.add(hi1);          // big, top-right
+  const hi2 = new THREE.Mesh(new THREE.CircleGeometry(0.02,10),
+    new THREE.MeshBasicMaterial({ color:0xffffff }));
+  hi2.position.set(-0.04,-0.045,0.088); g.add(hi2);        // small, bottom-left
+  g.position.set(side*0.2, 0.05, 0.42);
+  head.add(g);
+}
+makeEye(-1); makeEye(1);
+// eyebrows
+for (const s of [-1,1]) {
+  const brow = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.035,0.02), toon(0x3a3a5e));
+  brow.position.set(s*0.2, 0.3, 0.45); brow.rotation.z = s*0.15;
+  head.add(brow);
+}
+// mouth + blush
+const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.03,0.02), toon(0xd16a7e));
+mouth.position.set(0,-0.22,0.46); head.add(mouth);
+for (const s of [-1,1]) {
+  const blush = new THREE.Mesh(new THREE.CircleGeometry(0.075,12),
+    new THREE.MeshToonMaterial({ color:0xff9fb0, gradientMap, transparent:true, opacity:0.85 }));
+  blush.position.set(s*0.32,-0.08,0.38); blush.rotation.y = s*0.55;
+  head.add(blush);
+}
+
+// hair: back volume + spikes + bangs + ahoge
+const hair = new THREE.Group(); head.add(hair);
+const hairMat = toon(HAIR), hairHiMat = toon(HAIR_HI);
+const backHair = new THREE.Mesh(new THREE.SphereGeometry(0.54,18,14), hairMat);
+backHair.position.set(0,0.1,-0.06); backHair.scale.set(1,0.95,1);
+backHair.castShadow = true; hair.add(backHair);
+function spike(r,h,dir,mat) {
+  const d = dir.clone().normalize();
+  const m = new THREE.Mesh(new THREE.ConeGeometry(r,h,6), mat);
+  m.position.copy(d).multiplyScalar(0.38).add(new THREE.Vector3(0,0.12,0));
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), d);
+  m.castShadow = true;
+  hair.add(m);
+}
+spike(0.17,0.55,new THREE.Vector3(0,1,0.1),hairMat);
+spike(0.15,0.5,new THREE.Vector3(0.55,0.8,0.15),hairMat);
+spike(0.15,0.5,new THREE.Vector3(-0.55,0.8,0.15),hairMat);
+spike(0.15,0.5,new THREE.Vector3(0.6,0.7,-0.35),hairMat);
+spike(0.15,0.5,new THREE.Vector3(-0.6,0.7,-0.35),hairMat);
+spike(0.14,0.45,new THREE.Vector3(0.25,0.85,-0.55),hairHiMat);
+spike(0.14,0.45,new THREE.Vector3(-0.25,0.85,-0.55),hairMat);
+spike(0.13,0.4,new THREE.Vector3(0.9,0.35,0),hairMat);
+spike(0.13,0.4,new THREE.Vector3(-0.9,0.35,0),hairMat);
+// bangs (front, sway group)
+const bangs = new THREE.Group(); hair.add(bangs);
+for (const [x,mat] of [[-0.3,hairMat],[-0.1,hairHiMat],[0.1,hairMat],[0.3,hairMat]]) {
+  const b = new THREE.Mesh(new THREE.ConeGeometry(0.13,0.42,6), mat);
+  b.position.set(x, 0.28, 0.36);
+  b.rotation.x = Math.PI - 0.25;      // tip pointing down-forward
+  b.castShadow = true;
+  bangs.add(b);
+}
+// ahoge — signature antenna strand
+const ahoge = new THREE.Group();
+const a1 = new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.022,0.34,5), hairHiMat);
+a1.position.y = 0.17; a1.rotation.z = 0.35; ahoge.add(a1);
+const a2 = new THREE.Mesh(new THREE.CylinderGeometry(0.014,0.018,0.26,5), hairHiMat);
+a2.position.set(0.14,0.4,0); a2.rotation.z = 0.9; ahoge.add(a2);
+ahoge.position.set(0,0.62,0.05);
+hair.add(ahoge);
+
+boy.position.set(0, 0, -10);
+scene.add(boy);
+
+/* ---------- input ---------- */
+const keys = new Set();
+addEventListener('keydown', e => keys.add(e.code));
+addEventListener('keyup',   e => keys.delete(e.code));
+
+let camYaw = Math.PI, camPitch = 0.28, camDist = 9;
+let dragging = false, lx = 0, ly = 0;
+const cvs = renderer.domElement;
+cvs.addEventListener('pointerdown', e => {
+  dragging = true; lx = e.clientX; ly = e.clientY; cvs.setPointerCapture(e.pointerId);
+});
+cvs.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lx, dy = e.clientY - ly;
+  lx = e.clientX; ly = e.clientY;
+  camYaw   -= dx * 0.005;
+  camPitch -= dy * 0.005;   // inverted vertical: drag up -> camera tilts down
+  camPitch = THREE.MathUtils.clamp(camPitch, -0.3, 1.0);
+});
+addEventListener('pointerup', () => dragging = false);
+cvs.addEventListener('wheel', e => {
+  e.preventDefault();
+  camDist = THREE.MathUtils.clamp(camDist + e.deltaY * 0.01, 4, 30);
+}, { passive:false });
+
+/* ---------- game state ---------- */
+let yaw = 0;                       // character facing (0 = +Z)
+const TURN_RATE = THREE.MathUtils.degToRad(30);   // 30° per second
+let phase = 0, t = 0;
+const camTarget = new THREE.Vector3(0, 1.7, -10);
+const targetQuat = new THREE.Quaternion();
+const euler = new THREE.Euler();
+const CHAR_R = 0.5;
+
+function collides(x, z) {
+  for (const b of buildings)
+    if (Math.abs(x-b.x) < b.hw + CHAR_R && Math.abs(z-b.z) < b.hd + CHAR_R) return true;
+  return false;
+}
+
+/* ---------- main loop ---------- */
+const clock = new THREE.Clock();
+let firstFrame = true;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  t += dt;
+
+  // A/D: continuous turn in place (A = right = +yaw, D = left = -yaw)
+  if (keys.has('KeyA')) yaw += TURN_RATE * dt;
+  if (keys.has('KeyD')) yaw -= TURN_RATE * dt;
+
+  // W/S: move along current facing direction
+  const run = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  const fwd = (keys.has('KeyW')?1:0) - (keys.has('KeyS')?1:0);
+  const moving = fwd !== 0;
+  const speed = (run ? 7.5 : 3.6) * fwd;
+  if (moving) {
+    const dx = Math.sin(yaw) * speed * dt;
+    const dz = Math.cos(yaw) * speed * dt;
+    let nx = boy.position.x + dx;
+    if (collides(nx, boy.position.z)) nx = boy.position.x;
+    let nz = boy.position.z + dz;
+    if (collides(nx, nz)) nz = boy.position.z;
+    boy.position.x = THREE.MathUtils.clamp(nx, -95, 95);
+    boy.position.z = THREE.MathUtils.clamp(nz, -95, 95);
+  }
+
+  // smoothly face movement/turn direction
+  euler.set(0, yaw, 0);
+  targetQuat.setFromEuler(euler);
+  boy.quaternion.slerp(targetQuat, Math.min(1, 12*dt));
+
+  // walk cycle / idle decay
+  if (moving) {
+    phase += dt * (run ? 12 : 7);
+    const sw = run ? 0.9 : 0.6;
+    armL.rotation.x =  Math.sin(phase) * sw;
+    armR.rotation.x = -Math.sin(phase) * sw;
+    legL.rotation.x = -Math.sin(phase) * sw * 0.9;
+    legR.rotation.x =  Math.sin(phase) * sw * 0.9;
+    body.position.y = Math.abs(Math.sin(phase)) * 0.06;
+  } else {
+    const k = Math.exp(-8*dt);
+    armL.rotation.x *= k; armR.rotation.x *= k;
+    legL.rotation.x *= k; legR.rotation.x *= k;
+    body.position.y *= k;
+  }
+
+  // hair physics: gentle sway on bangs + ahoge
+  bangs.rotation.z = Math.sin(t*2.2) * 0.06;
+  bangs.rotation.x = Math.sin(t*1.7) * 0.04;
+  ahoge.rotation.z = Math.sin(t*2.8) * 0.18;
+  ahoge.rotation.x = Math.cos(t*2.1) * 0.12;
+
+  // petals
+  for (const p of petals) {
+    p.position.y -= p.userData.v * dt;
+    p.position.x += Math.sin(t*2 + p.userData.ph) * dt * 0.8;
+    p.rotation.x += p.userData.rx * dt;
+    p.rotation.z += p.userData.rz * dt;
+    if (p.position.y < 0) {
+      p.position.y = rnd(22,30);
+      p.position.x = rnd(-65,65); p.position.z = rnd(-65,65);
+    }
+  }
+  // clouds
+  for (const c of clouds) {
+    c.position.x += c.userData.speed * dt;
+    if (c.position.x > 85) c.position.x = -85;
+  }
+
+  // third-person camera: follows position, orbit stays where user dragged it
+  camTarget.lerp(new THREE.Vector3(boy.position.x, boy.position.y+1.7, boy.position.z),
+    1 - Math.exp(-6*dt));
+  camera.position.set(
+    camTarget.x + camDist * Math.cos(camPitch) * Math.sin(camYaw),
+    camTarget.y + camDist * Math.sin(camPitch),
+    camTarget.z + camDist * Math.cos(camPitch) * Math.cos(camYaw)
+  );
+  camera.lookAt(camTarget);
+
+  renderer.render(scene, camera);
+  if (firstFrame) {
+    firstFrame = false;
+    document.getElementById('loading').style.display = 'none';
+  }
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
